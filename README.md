@@ -1,35 +1,73 @@
-AutoPDF
-AutoPDF is a serverless PDF uploader & processor. Users pick a PDF in a browser extension → it uploads to S3 → Lambda extracts metadata and sends an SNS notification.
+# AutoPDF – Secure Document Processor
 
-Quick Start
-Clone & enter
-git clone https://github.com/<you>/AutoPDF.git
+**AutoPDF** is a serverless PDF uploader and processor designed to work within the AWS Free Tier.  
+Users can upload PDFs through a browser extension or UI → files are stored in S3 → AWS Lambda extracts metadata and triggers an SNS notification.  
+A React-based frontend with Nutrient's PSPDFKit viewer allows secure annotation and redacted export of documents.
+
+---
+
+## 🚀 Quick Start
+
+### 1. Clone & Set Up Environment
+
+```bash
+git clone https://github.com/VinYEET/AutoPDF.git
 cd AutoPDF
 
-Python & venv
+# Create and activate virtual environment
 python -m venv .venv
-..venv\Scripts\Activate
+.venv\Scripts\activate   # On Windows
+# source .venv/bin/activate  # On macOS/Linux
+
+# Install dev dependencies
 pip install --upgrade pip
 pip install -r requirements-dev.txt
+```
 
-Vendor Lambda deps
+### 2. Vendor Lambda Dependencies
+
+```bash
 pip install -r lambda\process_pdf\requirements.txt -t lambda\process_pdf
+```
 
-AWS creds
+### 3. Configure AWS Credentials
+
+```bash
 aws configure --profile autopdf
-or
+# or use env variables:
 $Env:AWS_PROFILE = "autopdf"
 $Env:AWS_DEFAULT_REGION = "us-east-1"
+```
 
-Deploy
+### 4. Deploy Infrastructure
+
+```bash
 cdk bootstrap --profile autopdf
 cdk deploy --profile autopdf
+```
 
-Project Layout
+---
+
+## 📁 Project Layout
+
+```
 AutoPDF/
-├── autopdf/ # CDK stack
-├── lambda/process_pdf/ # Lambda code + requirements.txt
-├── app.py
+├── autopdf/                  # CDK infrastructure (S3, Lambda, SNS setup)
+│   └── autopdf_stack.py
+├── lambda/
+│   └── process_pdf/          # Lambda handler and utilities
+│       ├── handler.py
+│       └── utils.py
+├── viewer-frontend/          # React + Nutrient viewer (optional)
+│   ├── public/
+│   └── src/
+│       ├── components/
+│       ├── App.jsx
+│       ├── index.js
+│       └── utils/download.js
+├── app.py                    # CDK app entry point
 ├── cdk.json
 ├── requirements-dev.txt
+├── requirements.txt
 └── README.md
+```
