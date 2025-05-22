@@ -1,0 +1,8 @@
+# normalize all text files to LF in repo
+*       text=auto
+
+# explicitly keep these filetypes as LF-only
+*.py    text eol=lf
+*.md    text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf

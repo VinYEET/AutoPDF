@@ -1,0 +1,3 @@
+PyPDF2
+typing_extensions
+boto3
