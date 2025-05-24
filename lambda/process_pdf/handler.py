@@ -2,51 +2,69 @@ import os
 import json
 import boto3
 import PyPDF2
+import urllib.parse
+from io import BytesIO
 
 sns = boto3.client('sns')
 s3  = boto3.client('s3')
 
 def extract_pdf_metadata(bucket, key):
-    # Download PDF from S3
-    obj = s3.get_object(Bucket=bucket, Key=key)
-    reader = PyPDF2.PdfReader(obj['Body'])
+    # Download the PDF into memory
+    obj    = s3.get_object(Bucket=bucket, Key=key)
+    data   = obj['Body'].read()
+    stream = BytesIO(data)
 
+    # Parse metadata and page count
+    reader    = PyPDF2.PdfReader(stream)
     meta      = reader.metadata or {}
     num_pages = len(reader.pages)
 
-    # Optional: grab first 200 chars of text from page 1
+    # Extract a short text preview from the first page
     preview = ""
     if reader.pages:
         text = reader.pages[0].extract_text() or ""
         preview = text.replace("\n", " ").strip()[:200]
 
     return {
-        "title":    meta.get("/Title"),
-        "author":   meta.get("/Author"),
-        "pages":    num_pages,
-        "preview":  preview
+        "title":   meta.get("/Title"),
+        "author":  meta.get("/Author"),
+        "pages":   num_pages,
+        "preview": preview
     }
 
 def main(event, context):
     for record in event.get("Records", []):
-        bucket = record["s3"]["bucket"]["name"]
-        key    = record["s3"]["object"]["key"]
+        bucket  = record["s3"]["bucket"]["name"]
+        raw_key = record["s3"]["object"]["key"]
+        # URL-decode the S3 key (handles spaces, parentheses, etc.)
+        key     = urllib.parse.unquote_plus(raw_key)
 
-        # 1. Extract
-        md = extract_pdf_metadata(bucket, key)
+        try:
+            # Extract metadata
+            md = extract_pdf_metadata(bucket, key)
+            payload = {
+                "s3Path":   f"s3://{bucket}/{key}",
+                "metadata": md
+            }
 
-        # 2. Build message payload
-        payload = {
-            "s3Path":   f"s3://{bucket}/{key}",
-            "metadata": md
-        }
+            print("[INFO] Extracted metadata:", json.dumps(md))
+            sns.publish(
+                TopicArn=os.environ["TOPIC_ARN"],
+                Message=json.dumps(payload),
+                Subject="AutoPDF PDF Uploaded"
+            )
 
-        # 3. Log & notify
-        print("[INFO] Extracted metadata:", json.dumps(md))
-        sns.publish(
-            TopicArn=os.environ["TOPIC_ARN"],
-            Message=json.dumps(payload),
-            Subject="AutoPDF PDF Uploaded"
-        )
+        except Exception as e:
+            # Handle and notify on any errors
+            error_payload = {
+                "s3Path": f"s3://{bucket}/{key}",
+                "error":  str(e)
+            }
+            print("[ERROR] Failed to process PDF:", json.dumps(error_payload))
+            sns.publish(
+                TopicArn=os.environ["TOPIC_ARN"],
+                Message=json.dumps(error_payload),
+                Subject="AutoPDF PDF Processing Failed"
+            )
 
     return {"status": "ok"}
