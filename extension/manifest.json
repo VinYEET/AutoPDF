@@ -1,0 +1,22 @@
+{
+    "manifest_version": 3,
+    "name": "AutoPDF Uploader",
+    "version": "1.0",
+    "description": "Upload PDFs directly from your browser to AWS S3 via presigned URLs",
+    "action": {
+      "default_popup": "popup.html"
+    },
+    "permissions": [
+      "storage"
+    ],
+    "host_permissions": [
+      "https://*/*"
+    ],
+    "web_accessible_resources": [
+          {
+            "resources": ["metadata.html", "metadata.js"],
+            "matches": ["<all_urls>"]
+          }
+        ]
+  }
+  
