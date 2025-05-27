@@ -6,7 +6,7 @@ A React-based frontend with Nutrient's PSPDFKit viewer allows secure annotation 
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Clone & Set Up Environment
 
