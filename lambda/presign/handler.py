@@ -1,32 +1,42 @@
-import os, json, boto3, urllib.parse
+import os
+import json
+import boto3
+import urllib.parse
 
-s3 = boto3.client("s3")
+# Initialize the S3 client and read the target bucket name from env
+s3     = boto3.client("s3")
+BUCKET = os.environ["BUCKET"]
 
 def handler(event, context):
-    # 1. Read & validate the filename param
+    # Read & validate the filename param
     params   = event.get("queryStringParameters") or {}
     raw_name = params.get("filename")
     if not raw_name:
-        return {"statusCode": 400, "body": "filename query parameter is required"}
+        return {
+            "statusCode": 400,
+            "body": "filename query parameter is required"
+        }
 
-    # 2. Decode it (spaces, %28/%29, etc.)
-    name = urllib.parse.unquote_plus(raw_name)
-    key  = name
+    # Decode URL-encoded filename
+    key = urllib.parse.unquote_plus(raw_name)
 
-    # 3. Generate a presigned PUT URL valid for 1 hour
-    url = s3.generate_presigned_url(
-        "put_object",
-        Params={
-            "Bucket": os.environ["BUCKET"],
-            "Key":    key,
-            "ContentType": "application/pdf"
-        },
+    # Generate a presigned POST that only allows 1–5 MiB uploads
+    post = s3.generate_presigned_post(
+        Bucket=BUCKET,
+        Key=key,
+        Conditions=[
+            ["content-length-range", 1, 5 * 1024 * 1024]
+        ],
         ExpiresIn=3600
     )
 
-    # 4. Return the URL and the key
+    # Return the POST info + the object key
     return {
         "statusCode": 200,
         "headers":    {"Content-Type": "application/json"},
-        "body":       json.dumps({"url": url, "key": key})
+        "body":       json.dumps({
+            "url":    post["url"],
+            "fields": post["fields"], 
+            "key":    key
+        })
     }

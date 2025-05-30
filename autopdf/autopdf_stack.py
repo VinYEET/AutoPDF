@@ -8,107 +8,95 @@ from aws_cdk import (
     aws_sns as sns,
     aws_apigateway as apigw,
     aws_dynamodb as ddb,
+    aws_iam as iam,
     CfnOutput,
 )
 from constructs import Construct
-
 
 class AutoPDFStack(Stack):
     def __init__(self, scope: Construct, id: str, **kwargs) -> None:
         super().__init__(scope, id, **kwargs)
 
-        # 1. S3 Bucket
-        bucket = s3.Bucket(
-            self,
-            "PDFUploadBucket",
-            lifecycle_rules=[s3.LifecycleRule(expiration=Duration.days(1))],
+        # 1) S3 Bucket (auto-expire after 1 day)
+        bucket = s3.Bucket(self, "PDFUploadBucket",
+            lifecycle_rules=[ s3.LifecycleRule(expiration=Duration.days(1)) ]
         )
-
-        # 2. SNS Topic
+    
+        # 2) SNS Topic for alerts (optional)
         topic = sns.Topic(self, "PDFNotificationTopic")
 
-        # 3. DynamoDB Table for metadata
-        table = ddb.Table(
-            self,
-            "MetadataTable",
+        # 3) DynamoDB table for metadata
+        meta_table = ddb.Table(self, "MetadataTable",
             partition_key=ddb.Attribute(name="s3Key", type=ddb.AttributeType.STRING),
-            removal_policy=cdk.RemovalPolicy.DESTROY,
+            removal_policy=cdk.RemovalPolicy.DESTROY
         )
 
-        # 4. PDF‐processing Lambda
-        pdf_lambda = lambda_.Function(
-            self,
-            "PDFProcessorLambda",
+        # 4) DynamoDB table to track monthly OCR usage
+        usage_table = ddb.Table(self, "OcrUsageTable",
+            partition_key=ddb.Attribute(name="month", type=ddb.AttributeType.STRING),
+            removal_policy=cdk.RemovalPolicy.DESTROY
+        )
+
+        # 5) PDF‐processing Lambda
+        pdf_lambda = lambda_.Function(self, "PDFProcessorLambda",
             runtime=lambda_.Runtime.PYTHON_3_9,
             handler="handler.main",
             code=lambda_.Code.from_asset("lambda/process_pdf"),
             environment={
-                "TOPIC_ARN": topic.topic_arn,
-                "METADATA_TABLE": table.table_name,
+                "TOPIC_ARN":         topic.topic_arn,
+                "METADATA_TABLE":    meta_table.table_name,
+                "OCR_USAGE_TABLE":   usage_table.table_name,
+                "OCR_PAGE_LIMIT":    "1000"
             },
         )
-
-        # 5. Permissions & Trigger
+        # Permissions for PDF Lambda
         bucket.grant_read(pdf_lambda)
         topic.grant_publish(pdf_lambda)
+        meta_table.grant_write_data(pdf_lambda)
+        usage_table.grant_read_write_data(pdf_lambda)
+        pdf_lambda.add_to_role_policy(iam.PolicyStatement(
+            actions=["textract:DetectDocumentText"],
+            resources=["*"],
+        ))
         bucket.add_event_notification(
-            s3.EventType.OBJECT_CREATED, s3n.LambdaDestination(pdf_lambda)
+            s3.EventType.OBJECT_CREATED,
+            s3n.LambdaDestination(pdf_lambda)
         )
-        table.grant_write_data(pdf_lambda)
 
-        # 6. PRESIGN–URL SERVICE
-        # 6a. Presign Lambda
-        presign_fn = lambda_.Function(
-            self,
-            "PresignLambda",
+        # 6) Presign Lambda + API Gateway
+        presign_fn = lambda_.Function(self, "PresignLambda",
             runtime=lambda_.Runtime.PYTHON_3_9,
-            handler="handler.handler",  # points at lambda/presign/handler.py
+            handler="handler.handler",
             code=lambda_.Code.from_asset("lambda/presign"),
             environment={"BUCKET": bucket.bucket_name},
         )
         bucket.grant_put(presign_fn)
 
-        # 6b. Expose via API Gateway
-        api = apigw.LambdaRestApi(
-            self,
-            "PresignApi",
+        api = apigw.LambdaRestApi(self, "PresignApi",
             rest_api_name="AutoPDF Presign Service",
             handler=presign_fn,
-            proxy=False,
+            proxy=False
         )
         presign = api.root.add_resource("presign")
-        presign.add_method("GET")  # GET /presign?filename=
-
-        # 6c. Output the URL for easy reference
-        cdk.CfnOutput(
-            self,
-            "PresignEndpoint",
+        presign.add_method("GET")
+        CfnOutput(self, "PresignEndpoint",
             value=api.url + "presign",
-            description="HTTP GET endpoint to generate S3 presigned URLs",
+            description="GET /presign?filename="
         )
-        
-        # 7. METADATA‐FETCH SERVICE
-        # 7a. Lambda to read from DynamoDB
-        get_meta_fn = lambda_.Function(
-            self, "GetMetadataLambda",
+
+        # 7) Metadata‐fetch Lambda + route
+        get_meta_fn = lambda_.Function(self, "GetMetadataLambda",
             runtime=lambda_.Runtime.PYTHON_3_9,
             handler="handler.handler",
             code=lambda_.Code.from_asset("lambda/get_metadata"),
-            environment={"METADATA_TABLE": table.table_name}
+            environment={"METADATA_TABLE": meta_table.table_name},
         )
-        # Grant read‐only permission on your metadata table
-        table.grant_read_data(get_meta_fn)
+        meta_table.grant_read_data(get_meta_fn)
 
-        # 7b. Add `/metadata` to your existing API Gateway
         metadata = api.root.add_resource("metadata")
-        metadata.add_method(
-            "GET",
-            apigw.LambdaIntegration(get_meta_fn),
-            # optional: require `key` query‐param documented in usage
-        )
+        metadata.add_method("GET", apigw.LambdaIntegration(get_meta_fn))
 
-        # 7c. Output metadata endpoint
         CfnOutput(self, "MetadataEndpoint",
             value=api.url + "metadata",
-            description="GET /metadata?key=<s3Key> to fetch stored PDF metadata"
+            description="GET /metadata?key=<s3Key>"
         )

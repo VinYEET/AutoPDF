@@ -1,4 +1,5 @@
-// Your two API endpoints:
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+
 const PRESIGN_URL  = 'https://u17smv77x1.execute-api.us-east-1.amazonaws.com/prod/presign';
 const METADATA_URL = 'https://u17smv77x1.execute-api.us-east-1.amazonaws.com/prod/metadata';
 
@@ -6,9 +7,16 @@ const fileInput = document.getElementById('fileInput');
 const uploadBtn = document.getElementById('uploadBtn');
 const statusDiv = document.getElementById('status');
 
-// Enable the Upload button as soon as a file is selected
+// Disable upload if file >5 MiB
 fileInput.addEventListener('change', () => {
-  uploadBtn.disabled = !fileInput.files.length;
+  const file = fileInput.files[0];
+  if (file && file.size > MAX_UPLOAD_BYTES) {
+    statusDiv.textContent = `❌ File too large (>${MAX_UPLOAD_BYTES/1024/1024} MB).`;
+    uploadBtn.disabled = true;
+  } else {
+    statusDiv.textContent = '';
+    uploadBtn.disabled = !file;
+  }
 });
 
 uploadBtn.addEventListener('click', async () => {
@@ -16,27 +24,25 @@ uploadBtn.addEventListener('click', async () => {
   const filename = encodeURIComponent(file.name);
 
   try {
-    // === Presign step ===
+    // Get presigned POST info
     statusDiv.textContent = 'Requesting upload URL…';
     const presignResp = await fetch(`${PRESIGN_URL}?filename=${filename}`);
-    if (!presignResp.ok) throw new Error(`Presign failed (${presignResp.status})`);
-    const { url, key } = await presignResp.json();
+    if (!presignResp.ok) throw new Error(`Presign error (${presignResp.status})`);
+    const { url, fields, key } = await presignResp.json();
 
-    // === Upload step ===
+    // Upload via multipart/form-data POST
     statusDiv.textContent = 'Uploading file…';
-    const uploadResp = await fetch(url, {
-      method:  'PUT',
-      headers: { 'Content-Type': 'application/pdf' },
-      body:     file
-    });
+    const fd = new FormData();
+    Object.entries(fields).forEach(([k, v]) => fd.append(k, v));
+    fd.append('file', file);
+
+    const uploadResp = await fetch(url, { method: 'POST', body: fd });
     if (!uploadResp.ok) throw new Error(`Upload failed (${uploadResp.status})`);
 
-    // === Poll for metadata ===
+    // Poll the metadata API for results
     statusDiv.textContent = 'Upload complete! Fetching metadata…';
-
     let metadata = null;
     for (let i = 0; i < 10; i++) {
-      // wait 1s between attempts
       await new Promise(r => setTimeout(r, 1000));
       const metaResp = await fetch(`${METADATA_URL}?key=${encodeURIComponent(key)}`);
       if (metaResp.ok) {
@@ -45,14 +51,10 @@ uploadBtn.addEventListener('click', async () => {
       }
     }
 
-    // === Render result ===
+    // Store & show the metadata in a tab
     if (!metadata) {
-      statusDiv.innerHTML = `
-        Uploaded as <strong>${key}</strong>.<br>
-        Metadata still processing—check back later.
-      `;
+      statusDiv.textContent = 'Metadata not available yet—try again shortly.';
     } else {
-      // Save & open tab
       chrome.storage.local.set({ lastMetadata: metadata, lastKey: key }, () => {
         chrome.tabs.create({ url: chrome.runtime.getURL('metadata.html') });
       });
